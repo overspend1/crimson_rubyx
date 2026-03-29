@@ -17,6 +17,12 @@ chmod +x ./build-ruby-kernel.sh ./make-anykernel-zip.sh
 ./build-ruby-kernel.sh
 ```
 
+No `sudo` on server? If build dependencies are already installed:
+
+```bash
+SKIP_DEPS_INSTALL=1 ./build-ruby-kernel.sh
+```
+
 ## Build Profiles
 
 ```bash

@@ -8,26 +8,13 @@ if [[ "$(uname -s)" != "Linux" ]]; then
   exit 1
 fi
 
-if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-  SUDO=""
-elif command -v sudo >/dev/null 2>&1; then
-  SUDO="sudo"
-else
-  echo "sudo is required when not running as root."
-  exit 1
-fi
-
-if ! command -v apt >/dev/null 2>&1; then
-  echo "apt not found. This script currently supports Debian/Ubuntu-based servers."
-  exit 1
-fi
-
 ROOT_DIR="${HOME}/kramel-ruby"
 KERNEL_DIR="${ROOT_DIR}/kernel_ruby"
 TOOLCHAIN_DIR="${ROOT_DIR}/proton-clang"
 OUT_DIR="${KERNEL_DIR}/out"
 ARTIFACTS_DIR="${ROOT_DIR}/artifacts"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKIP_DEPS_INSTALL="${SKIP_DEPS_INSTALL:-0}"
 SUKISU_SETUP_URL="https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
 SUSFS_REPO_URL="${SUSFS_REPO_URL:-https://gitlab.com/simonpunk/susfs4ksu.git}"
 SUSFS_BRANCH="${SUSFS_BRANCH:-kernel-4.19}"
@@ -50,6 +37,7 @@ Usage:
   ENABLE_SUKISU=1          ./build-ruby-kernel.sh   # integrate SukiSU-Ultra (default)
   ENABLE_SUSFS=1           ./build-ruby-kernel.sh   # integrate SUSFS for KSU (default)
   ENABLE_CUSTOM_CONFIG=1   ./build-ruby-kernel.sh   # merge custom config fragment (default)
+  SKIP_DEPS_INSTALL=1      ./build-ruby-kernel.sh   # skip apt install (no sudo/root)
   CUSTOM_CONFIG_FRAGMENT=/path/to/file.fragment ./build-ruby-kernel.sh
   SUKISU_REF=builtin        ./build-ruby-kernel.sh  # ref/branch/tag passed to setup.sh
 EOF
@@ -64,7 +52,7 @@ case "${BUILD_PROFILE}" in
     ;;
 esac
 
-for bool_var in ENABLE_MODERN_STACK ENABLE_SUKISU ENABLE_SUSFS ENABLE_CUSTOM_CONFIG; do
+for bool_var in ENABLE_MODERN_STACK ENABLE_SUKISU ENABLE_SUSFS ENABLE_CUSTOM_CONFIG SKIP_DEPS_INSTALL; do
   case "${!bool_var}" in
     0|1) ;;
     *)
@@ -73,6 +61,24 @@ for bool_var in ENABLE_MODERN_STACK ENABLE_SUKISU ENABLE_SUSFS ENABLE_CUSTOM_CON
       ;;
   esac
 done
+
+if [[ "${SKIP_DEPS_INSTALL}" == "0" ]]; then
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    SUDO=""
+  elif command -v sudo >/dev/null 2>&1; then
+    SUDO="sudo"
+  else
+    echo "sudo is required when not running as root. Or set SKIP_DEPS_INSTALL=1."
+    exit 1
+  fi
+
+  if ! command -v apt >/dev/null 2>&1; then
+    echo "apt not found. Use Debian/Ubuntu, or set SKIP_DEPS_INSTALL=1."
+    exit 1
+  fi
+else
+  SUDO=""
+fi
 
 normalize_sukisu_ref() {
   case "$1" in
@@ -115,11 +121,15 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
 fi
 
 echo "[1/6] Installing build dependencies..."
-${SUDO} apt update
-${SUDO} apt install -y \
-  bc bison build-essential ccache curl flex g++-multilib gcc-multilib git patch \
-  libelf-dev liblz4-tool libncurses5-dev libssl-dev libxml2-utils \
-  lzop python3 rsync unzip xz-utils zip zlib1g-dev
+if [[ "${SKIP_DEPS_INSTALL}" == "0" ]]; then
+  ${SUDO} apt update
+  ${SUDO} apt install -y \
+    bc bison build-essential ccache curl flex g++-multilib gcc-multilib git patch \
+    libelf-dev liblz4-tool libncurses5-dev libssl-dev libxml2-utils \
+    lzop python3 rsync unzip xz-utils zip zlib1g-dev
+else
+  echo "Skipping dependency installation (SKIP_DEPS_INSTALL=1)."
+fi
 
 mkdir -p "${ROOT_DIR}" "${ARTIFACTS_DIR}"
 cd "${ROOT_DIR}"
