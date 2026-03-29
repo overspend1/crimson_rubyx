@@ -153,6 +153,49 @@ ensure_susfs_task_fields() {
   mv "${tmp}" "${sched_file}"
 }
 
+ensure_susfs_inode_flags() {
+  local fs_header="$1"
+  local tmp=""
+
+  if [[ ! -f "${fs_header}" ]]; then
+    echo "Missing fs header: ${fs_header}"
+    return 1
+  fi
+
+  if grep -q "INODE_STATE_SUS_KSTAT" "${fs_header}" && \
+     grep -q "INODE_STATE_SUS_PATH" "${fs_header}" && \
+     grep -q "INODE_STATE_SUS_MOUNT" "${fs_header}" && \
+     grep -q "INODE_STATE_OPEN_REDIRECT" "${fs_header}"; then
+    return 0
+  fi
+
+  tmp="$(mktemp)"
+  awk '
+    /^[[:space:]]*#include <linux\/mutex.h>/ && !done {
+      print
+      print ""
+      print "#ifdef CONFIG_KSU_SUSFS"
+      print "#ifndef INODE_STATE_SUS_PATH"
+      print "#define INODE_STATE_SUS_PATH ((unsigned long)1 << 24)"
+      print "#endif"
+      print "#ifndef INODE_STATE_SUS_MOUNT"
+      print "#define INODE_STATE_SUS_MOUNT ((unsigned long)1 << 25)"
+      print "#endif"
+      print "#ifndef INODE_STATE_SUS_KSTAT"
+      print "#define INODE_STATE_SUS_KSTAT ((unsigned long)1 << 26)"
+      print "#endif"
+      print "#ifndef INODE_STATE_OPEN_REDIRECT"
+      print "#define INODE_STATE_OPEN_REDIRECT ((unsigned long)1 << 27)"
+      print "#endif"
+      print "#endif"
+      done = 1
+      next
+    }
+    { print }
+  ' "${fs_header}" > "${tmp}"
+  mv "${tmp}" "${fs_header}"
+}
+
 if [[ "${ENABLE_SUKISU}" == "1" ]]; then
   if ! sukisu_ref_exists "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git" "${SUKISU_REF}"; then
     echo "SUKISU_REF '${SUKISU_REF}' does not exist as a remote branch/tag."
@@ -279,6 +322,10 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
   # task_struct fields from include/linux/sched.h, which breaks fs/namespace.c.
   if grep -q "susfs_last_fake_mnt_id" "${KERNEL_DIR}/fs/namespace.c" 2>/dev/null; then
     ensure_susfs_task_fields "${KERNEL_DIR}/include/linux/sched.h"
+  fi
+
+  if grep -q "INODE_STATE_SUS_" "${KERNEL_DIR}/fs/proc/task_mmu.c" 2>/dev/null; then
+    ensure_susfs_inode_flags "${KERNEL_DIR}/include/linux/fs.h"
   fi
 
   if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
