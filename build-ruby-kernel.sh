@@ -209,6 +209,17 @@ export LLVM=1
 export LLVM_IAS=1
 export CC=clang
 
+# Avoid old proton-clang GNU ld for host tools on newer distros (RELR libc).
+# Build host utilities with system gcc/g++ by default.
+if command -v gcc >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
+  export HOSTCC="${HOSTCC:-gcc}"
+  export HOSTCXX="${HOSTCXX:-g++}"
+else
+  export HOSTCC="${HOSTCC:-clang}"
+  export HOSTCXX="${HOSTCXX:-clang++}"
+  export HOSTLDFLAGS="${HOSTLDFLAGS:--fuse-ld=lld}"
+fi
+
 cd "${KERNEL_DIR}"
 make O="${OUT_DIR}" ARCH=arm64 ruby_user_defconfig
 
