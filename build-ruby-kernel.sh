@@ -196,16 +196,17 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
     cp -fv "${KERNEL_SUSFS_PATCH}" "${KERNEL_DIR}/"
   fi
 
-  if ! (cd "${KERNEL_DIR}/KernelSU" && patch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
+  if ! (cd "${KERNEL_DIR}/KernelSU" && patch --batch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
+    echo "KernelSU SUSFS patch did not apply cleanly; checking for existing SUSFS support in current SukiSU ref..."
     if ! grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
-      echo "Failed applying KernelSU susfs patch."
+      echo "Failed applying KernelSU susfs patch and no KSU_SUSFS config was found."
       exit 1
     fi
   fi
 
   if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
     patch_name="$(basename "${KERNEL_SUSFS_PATCH}")"
-    if ! (cd "${KERNEL_DIR}" && patch -p1 --forward < "${patch_name}"); then
+    if ! (cd "${KERNEL_DIR}" && patch --batch -p1 --forward < "${patch_name}"); then
       if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
         echo "Failed applying kernel susfs patch."
         exit 1
