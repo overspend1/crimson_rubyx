@@ -112,6 +112,47 @@ sukisu_has_native_susfs() {
   grep -q "linux/susfs.h" "${ksu_dir}/kernel/ksuinit.c" 2>/dev/null
 }
 
+ensure_susfs_task_fields() {
+  local sched_file="$1"
+  local need_task_state="0"
+  local need_last_fake="0"
+  local tmp=""
+
+  if [[ ! -f "${sched_file}" ]]; then
+    echo "Missing sched header: ${sched_file}"
+    return 1
+  fi
+
+  grep -q "susfs_task_state" "${sched_file}" || need_task_state="1"
+  grep -q "susfs_last_fake_mnt_id" "${sched_file}" || need_last_fake="1"
+
+  if [[ "${need_task_state}" == "0" && "${need_last_fake}" == "0" ]]; then
+    return 0
+  fi
+
+  tmp="$(mktemp)"
+  awk \
+    -v add_state="${need_task_state}" \
+    -v add_last="${need_last_fake}" \
+    '
+      /^[[:space:]]*randomized_struct_fields_end/ && !done {
+        if (add_state == "1") {
+          print "#if defined(CONFIG_KSU_SUSFS)"
+          print "\tu64 susfs_task_state;"
+          print "#endif"
+        }
+        if (add_last == "1") {
+          print "#if defined(CONFIG_KSU_SUSFS)"
+          print "\tu64 susfs_last_fake_mnt_id;"
+          print "#endif"
+        }
+        done = 1
+      }
+      { print }
+    ' "${sched_file}" > "${tmp}"
+  mv "${tmp}" "${sched_file}"
+}
+
 if [[ "${ENABLE_SUKISU}" == "1" ]]; then
   if ! sukisu_ref_exists "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git" "${SUKISU_REF}"; then
     echo "SUKISU_REF '${SUKISU_REF}' does not exist as a remote branch/tag."
@@ -232,6 +273,12 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
 
   if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
     echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "${KERNEL_DIR}/fs/Makefile"
+  fi
+
+  # Some vendor 4.19 trees partially apply susfs namespace changes but miss
+  # task_struct fields from include/linux/sched.h, which breaks fs/namespace.c.
+  if grep -q "susfs_last_fake_mnt_id" "${KERNEL_DIR}/fs/namespace.c" 2>/dev/null; then
+    ensure_susfs_task_fields "${KERNEL_DIR}/include/linux/sched.h"
   fi
 
   if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
