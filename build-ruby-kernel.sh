@@ -216,6 +216,10 @@ export OBJCOPY="${TOOLCHAIN_DIR}/bin/llvm-objcopy"
 export OBJDUMP="${TOOLCHAIN_DIR}/bin/llvm-objdump"
 export STRIP="${TOOLCHAIN_DIR}/bin/llvm-strip"
 export READELF="${TOOLCHAIN_DIR}/bin/llvm-readelf"
+TARGET_TRIPLE="${TARGET_TRIPLE:-aarch64-linux-gnu}"
+CLANG_TRIPLE_PREFIX="${CLANG_TRIPLE_PREFIX:-${TARGET_TRIPLE}-}"
+CROSS_COMPILE_PREFIX="${CROSS_COMPILE_PREFIX:-aarch64-linux-gnu-}"
+CROSS_COMPILE_ARM32_PREFIX="${CROSS_COMPILE_ARM32_PREFIX:-arm-linux-gnueabi-}"
 
 # Host tools must use system binutils and compiler to avoid old proton ld/glibc RELR issues.
 if [[ -x /usr/bin/gcc && -x /usr/bin/g++ && -x /usr/bin/ld.bfd ]]; then
@@ -236,10 +240,18 @@ echo "Using HOSTCXX=${HOSTCXX_BIN}"
 echo "Using HOSTLD=${HOSTLD_BIN}"
 echo "Using CC=${CC}"
 echo "Using LD=${LD}"
+echo "Using CLANG_TRIPLE=${CLANG_TRIPLE_PREFIX}"
+echo "Using CROSS_COMPILE=${CROSS_COMPILE_PREFIX}"
+echo "Using CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32_PREFIX}"
 
 KMAKE_ARGS=(
   O="${OUT_DIR}"
   ARCH=arm64
+  LLVM=1
+  LLVM_IAS=1
+  CLANG_TRIPLE="${CLANG_TRIPLE_PREFIX}"
+  CROSS_COMPILE="${CROSS_COMPILE_PREFIX}"
+  CROSS_COMPILE_ARM32="${CROSS_COMPILE_ARM32_PREFIX}"
   CC="${CC}"
   LD="${LD}"
   AR="${AR}"
