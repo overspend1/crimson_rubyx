@@ -203,16 +203,17 @@ echo "[4/6] Preparing kernel config (ruby_user_defconfig)..."
 export PATH="${TOOLCHAIN_DIR}/bin:${PATH}"
 export ARCH=arm64
 export SUBARCH=arm64
-export KBUILD_BUILD_USER="codex"
-export KBUILD_BUILD_HOST="wsl"
+export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-${USER:-builder}}"
+export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-$(hostname 2>/dev/null || echo linux)}"
 export LLVM=1
 export LLVM_IAS=1
 export CC=clang
 
 # Host tools must use system gcc/g++ to avoid old proton ld/glibc RELR issues.
 if [[ -x /usr/bin/gcc && -x /usr/bin/g++ ]]; then
-  export HOSTCC="${HOSTCC:-/usr/bin/gcc}"
-  export HOSTCXX="${HOSTCXX:-/usr/bin/g++}"
+  export HOSTCC="${HOSTCC:-/usr/bin/gcc -B/usr/bin}"
+  export HOSTCXX="${HOSTCXX:-/usr/bin/g++ -B/usr/bin}"
+  export HOSTLDFLAGS="${HOSTLDFLAGS:--fuse-ld=bfd}"
 else
   echo "Missing /usr/bin/gcc or /usr/bin/g++."
   echo "Install build-essential (or provide HOSTCC/HOSTCXX to compatible system compilers)."
@@ -221,6 +222,7 @@ fi
 
 echo "Using HOSTCC=${HOSTCC}"
 echo "Using HOSTCXX=${HOSTCXX}"
+echo "Using HOSTLDFLAGS=${HOSTLDFLAGS}"
 
 cd "${KERNEL_DIR}"
 make O="${OUT_DIR}" ARCH=arm64 ruby_user_defconfig
