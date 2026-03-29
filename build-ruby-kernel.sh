@@ -209,16 +209,18 @@ export LLVM=1
 export LLVM_IAS=1
 export CC=clang
 
-# Avoid old proton-clang GNU ld for host tools on newer distros (RELR libc).
-# Build host utilities with system gcc/g++ by default.
-if command -v gcc >/dev/null 2>&1 && command -v g++ >/dev/null 2>&1; then
-  export HOSTCC="${HOSTCC:-gcc}"
-  export HOSTCXX="${HOSTCXX:-g++}"
+# Host tools must use system gcc/g++ to avoid old proton ld/glibc RELR issues.
+if [[ -x /usr/bin/gcc && -x /usr/bin/g++ ]]; then
+  export HOSTCC="${HOSTCC:-/usr/bin/gcc}"
+  export HOSTCXX="${HOSTCXX:-/usr/bin/g++}"
 else
-  export HOSTCC="${HOSTCC:-clang}"
-  export HOSTCXX="${HOSTCXX:-clang++}"
-  export HOSTLDFLAGS="${HOSTLDFLAGS:--fuse-ld=lld}"
+  echo "Missing /usr/bin/gcc or /usr/bin/g++."
+  echo "Install build-essential (or provide HOSTCC/HOSTCXX to compatible system compilers)."
+  exit 1
 fi
+
+echo "Using HOSTCC=${HOSTCC}"
+echo "Using HOSTCXX=${HOSTCXX}"
 
 cd "${KERNEL_DIR}"
 make O="${OUT_DIR}" ARCH=arm64 ruby_user_defconfig
