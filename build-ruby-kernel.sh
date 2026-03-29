@@ -43,8 +43,8 @@ Usage:
   BUILD_JOBS=1             ./build-ruby-kernel.sh   # single-thread debug build (shows first error clearly)
   SKIP_DEPS_INSTALL=1      ./build-ruby-kernel.sh   # skip apt install (no sudo/root)
   CUSTOM_CONFIG_FRAGMENT=/path/to/file.fragment ./build-ruby-kernel.sh
-  SUKISU_REF=auto           ./build-ruby-kernel.sh  # auto: susfs-main if ENABLE_SUSFS=1, else builtin
-  SUKISU_REF=susfs-main     ./build-ruby-kernel.sh  # recommended for SUSFS
+  SUKISU_REF=auto           ./build-ruby-kernel.sh  # auto: builtin
+  SUKISU_REF=builtin        ./build-ruby-kernel.sh  # recommended for non-GKI + SUSFS
 EOF
 }
 
@@ -86,11 +86,7 @@ else
 fi
 
 if [[ "${SUKISU_REF}" == "auto" ]]; then
-  if [[ "${ENABLE_SUSFS}" == "1" ]]; then
-    SUKISU_REF="susfs-main"
-  else
-    SUKISU_REF="builtin"
-  fi
+  SUKISU_REF="builtin"
 fi
 
 if [[ "${ENABLE_SUSFS}" == "1" && "${ENABLE_SUKISU}" != "1" ]]; then
@@ -104,16 +100,28 @@ remote_branch_exists() {
   git ls-remote --heads "${repo}" "${branch}" | grep -q "refs/heads/${branch}$"
 }
 
-is_sukisu_susfs_ref() {
-  [[ "$1" == susfs-* ]]
+sukisu_ref_exists() {
+  local repo="$1"
+  local ref="$2"
+  git ls-remote --heads --tags "${repo}" "${ref}" | grep -q .
+}
+
+sukisu_has_native_susfs() {
+  local ksu_dir="$1"
+  grep -q "config KSU_SUSFS" "${ksu_dir}/kernel/Kconfig" 2>/dev/null && \
+  grep -q "linux/susfs.h" "${ksu_dir}/kernel/ksuinit.c" 2>/dev/null
 }
 
 if [[ "${ENABLE_SUKISU}" == "1" ]]; then
-  # setup.sh supports special susfs-* refs that are not guaranteed to be repo branches.
-  if ! is_sukisu_susfs_ref "${SUKISU_REF}"; then
+  if ! sukisu_ref_exists "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git" "${SUKISU_REF}"; then
+    echo "SUKISU_REF '${SUKISU_REF}' does not exist as a remote branch/tag."
+    echo "Try one of: builtin, main, susfs_features, v4.1.2"
+    exit 1
+  fi
+  if [[ "${SUKISU_REF}" == susfs-* ]]; then
     if ! remote_branch_exists "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git" "${SUKISU_REF}"; then
-      echo "SUKISU_REF '${SUKISU_REF}' does not exist upstream."
-      echo "Try one of: main, builtin, susfs_features, susfs-main, susfs-test"
+      echo "Ref '${SUKISU_REF}' is documented in old guides but not present upstream now."
+      echo "Use SUKISU_REF=builtin for non-GKI + SUSFS."
       exit 1
     fi
   fi
@@ -174,67 +182,61 @@ fi
 if [[ "${ENABLE_SUSFS}" == "1" ]]; then
   echo "[3.6/6] Integrating SUSFS..."
 
-  if is_sukisu_susfs_ref "${SUKISU_REF}"; then
-    echo "SUSFS is handled by SukiSU setup ref '${SUKISU_REF}', skipping external susfs4ksu patch set."
-    if ! grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
-      echo "SUKISU_REF='${SUKISU_REF}' did not expose KSU_SUSFS config as expected."
+  if [[ ! -d "${SUSFS_DIR}/.git" ]]; then
+    git clone --depth=1 --branch "${SUSFS_BRANCH}" "${SUSFS_REPO_URL}" "${SUSFS_DIR}"
+  else
+    git -C "${SUSFS_DIR}" fetch origin "${SUSFS_BRANCH}" --depth=1
+    git -C "${SUSFS_DIR}" checkout "${SUSFS_BRANCH}"
+    git -C "${SUSFS_DIR}" reset --hard "origin/${SUSFS_BRANCH}"
+  fi
+
+  # Always copy SUSFS source/header payload so KernelSU includes can resolve.
+  cp -fv "${SUSFS_DIR}/kernel_patches/fs/"* "${KERNEL_DIR}/fs/"
+  cp -fv "${SUSFS_DIR}/kernel_patches/include/linux/"* "${KERNEL_DIR}/include/linux/"
+
+  KERNEL_SUSFS_PATCH=""
+  for candidate in \
+    "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch" \
+    "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.14.patch"; do
+    if [[ -f "${candidate}" ]]; then
+      KERNEL_SUSFS_PATCH="${candidate}"
+      break
+    fi
+  done
+
+  if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
+    cp -fv "${KERNEL_SUSFS_PATCH}" "${KERNEL_DIR}/"
+  fi
+
+  if sukisu_has_native_susfs "${KERNEL_DIR}/KernelSU"; then
+    echo "SukiSU ref '${SUKISU_REF}' already has native SUSFS hooks; skipping KernelSU patch."
+  else
+    cp -fv "${SUSFS_DIR}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" "${KERNEL_DIR}/KernelSU/"
+    if ! (cd "${KERNEL_DIR}/KernelSU" && patch --batch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
+      echo "Failed applying KernelSU susfs patch for SukiSU ref '${SUKISU_REF}'."
+      echo "Use SUKISU_REF=builtin for the most compatible non-GKI SUSFS path."
       exit 1
     fi
-  else
-    if [[ ! -d "${SUSFS_DIR}/.git" ]]; then
-      git clone --depth=1 --branch "${SUSFS_BRANCH}" "${SUSFS_REPO_URL}" "${SUSFS_DIR}"
-    else
-      git -C "${SUSFS_DIR}" fetch origin "${SUSFS_BRANCH}" --depth=1
-      git -C "${SUSFS_DIR}" checkout "${SUSFS_BRANCH}"
-      git -C "${SUSFS_DIR}" reset --hard "origin/${SUSFS_BRANCH}"
-    fi
+  fi
 
-    # Always copy SUSFS source/header payload so KernelSU includes can resolve.
-    cp -fv "${SUSFS_DIR}/kernel_patches/fs/"* "${KERNEL_DIR}/fs/"
-    cp -fv "${SUSFS_DIR}/kernel_patches/include/linux/"* "${KERNEL_DIR}/include/linux/"
-
-    cp -fv "${SUSFS_DIR}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" "${KERNEL_DIR}/KernelSU/"
-
-    KERNEL_SUSFS_PATCH=""
-    for candidate in \
-      "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch" \
-      "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.14.patch"; do
-      if [[ -f "${candidate}" ]]; then
-        KERNEL_SUSFS_PATCH="${candidate}"
-        break
-      fi
-    done
-
-    if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
-      cp -fv "${KERNEL_SUSFS_PATCH}" "${KERNEL_DIR}/"
-    fi
-
-    if ! (cd "${KERNEL_DIR}/KernelSU" && patch --batch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
-      echo "KernelSU SUSFS patch did not apply cleanly; checking for existing SUSFS support in current SukiSU ref..."
-      if ! grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
-        echo "Failed applying KernelSU susfs patch and no KSU_SUSFS config was found."
+  if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
+    patch_name="$(basename "${KERNEL_SUSFS_PATCH}")"
+    if ! (cd "${KERNEL_DIR}" && patch --batch -p1 --forward < "${patch_name}"); then
+      if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
+        echo "Failed applying kernel susfs patch (${patch_name})."
+        echo "This kernel tree may require manual susfs patch porting."
         exit 1
       fi
     fi
+  fi
 
-    if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
-      patch_name="$(basename "${KERNEL_SUSFS_PATCH}")"
-      if ! (cd "${KERNEL_DIR}" && patch --batch -p1 --forward < "${patch_name}"); then
-        if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
-          echo "Failed applying kernel susfs patch."
-          exit 1
-        fi
-      fi
-    fi
+  if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
+    echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "${KERNEL_DIR}/fs/Makefile"
+  fi
 
-    if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
-      echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "${KERNEL_DIR}/fs/Makefile"
-    fi
-
-    if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
-      echo "SUSFS files missing after integration (include/linux/susfs.h or fs/susfs.c)."
-      exit 1
-    fi
+  if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
+    echo "SUSFS files missing after integration (include/linux/susfs.h or fs/susfs.c)."
+    exit 1
   fi
 fi
 
@@ -286,7 +288,9 @@ echo "Using CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32_PREFIX}"
 if [[ "${DISABLE_WERROR}" == "1" ]]; then
   echo "[4.1/6] Disabling vendor -Werror flags for modern clang compatibility..."
   find "${KERNEL_DIR}" -type f \( -name Makefile -o -name Kbuild \) \
-    -exec sed -i -E 's/(^|[[:space:]])-Werror($|[[:space:]])/\1-Wno-error\2/g' {} +
+    -exec sed -i -E \
+      -e 's/(^|[[:space:]])-Werror=([[:alnum:]_,-]+)($|[[:space:]])/\1-Wno-error=\2\3/g' \
+      -e 's/(^|[[:space:]])-Werror($|[[:space:]])/\1-Wno-error\2/g' {} +
 fi
 
 KMAKE_ARGS=(
