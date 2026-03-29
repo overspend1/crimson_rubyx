@@ -146,6 +146,8 @@ else
   git -C "${KERNEL_DIR}" fetch origin ruby-s-oss --depth=1
   git -C "${KERNEL_DIR}" checkout ruby-s-oss
   git -C "${KERNEL_DIR}" reset --hard origin/ruby-s-oss
+  # Drop untracked leftovers from previous integration attempts (e.g. KernelSU dir/patch rejects).
+  git -C "${KERNEL_DIR}" clean -fd
 fi
 
 if [[ ! -d "${TOOLCHAIN_DIR}/.git" ]]; then
