@@ -24,6 +24,7 @@ ENABLE_MODERN_STACK="${ENABLE_MODERN_STACK:-1}"
 ENABLE_SUKISU="${ENABLE_SUKISU:-1}"
 ENABLE_SUSFS="${ENABLE_SUSFS:-1}"
 ENABLE_CUSTOM_CONFIG="${ENABLE_CUSTOM_CONFIG:-1}"
+DISABLE_WERROR="${DISABLE_WERROR:-1}"
 CUSTOM_CONFIG_FRAGMENT="${CUSTOM_CONFIG_FRAGMENT:-${SCRIPT_DIR}/configs/ruby_custom.fragment}"
 SUKISU_REF="${SUKISU_REF:-builtin}"
 
@@ -37,6 +38,7 @@ Usage:
   ENABLE_SUKISU=1          ./build-ruby-kernel.sh   # integrate SukiSU-Ultra (default)
   ENABLE_SUSFS=1           ./build-ruby-kernel.sh   # integrate SUSFS for KSU (default)
   ENABLE_CUSTOM_CONFIG=1   ./build-ruby-kernel.sh   # merge custom config fragment (default)
+  DISABLE_WERROR=1         ./build-ruby-kernel.sh   # disable vendor -Werror traps (default)
   SKIP_DEPS_INSTALL=1      ./build-ruby-kernel.sh   # skip apt install (no sudo/root)
   CUSTOM_CONFIG_FRAGMENT=/path/to/file.fragment ./build-ruby-kernel.sh
   SUKISU_REF=builtin        ./build-ruby-kernel.sh  # ref/branch/tag passed to setup.sh
@@ -52,7 +54,7 @@ case "${BUILD_PROFILE}" in
     ;;
 esac
 
-for bool_var in ENABLE_MODERN_STACK ENABLE_SUKISU ENABLE_SUSFS ENABLE_CUSTOM_CONFIG SKIP_DEPS_INSTALL; do
+for bool_var in ENABLE_MODERN_STACK ENABLE_SUKISU ENABLE_SUSFS ENABLE_CUSTOM_CONFIG DISABLE_WERROR SKIP_DEPS_INSTALL; do
   case "${!bool_var}" in
     0|1) ;;
     *)
@@ -166,36 +168,58 @@ fi
 if [[ "${ENABLE_SUSFS}" == "1" ]]; then
   echo "[3.6/6] Integrating SUSFS..."
 
-  if grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
-    echo "SUSFS config already present in selected SukiSU ref."
+  if [[ ! -d "${SUSFS_DIR}/.git" ]]; then
+    git clone --depth=1 --branch "${SUSFS_BRANCH}" "${SUSFS_REPO_URL}" "${SUSFS_DIR}"
   else
-    if [[ ! -d "${SUSFS_DIR}/.git" ]]; then
-      git clone --depth=1 --branch "${SUSFS_BRANCH}" "${SUSFS_REPO_URL}" "${SUSFS_DIR}"
-    else
-      git -C "${SUSFS_DIR}" fetch origin "${SUSFS_BRANCH}" --depth=1
-      git -C "${SUSFS_DIR}" checkout "${SUSFS_BRANCH}"
-      git -C "${SUSFS_DIR}" reset --hard "origin/${SUSFS_BRANCH}"
+    git -C "${SUSFS_DIR}" fetch origin "${SUSFS_BRANCH}" --depth=1
+    git -C "${SUSFS_DIR}" checkout "${SUSFS_BRANCH}"
+    git -C "${SUSFS_DIR}" reset --hard "origin/${SUSFS_BRANCH}"
+  fi
+
+  # Always copy SUSFS source/header payload so KernelSU includes can resolve.
+  cp -fv "${SUSFS_DIR}/kernel_patches/fs/"* "${KERNEL_DIR}/fs/"
+  cp -fv "${SUSFS_DIR}/kernel_patches/include/linux/"* "${KERNEL_DIR}/include/linux/"
+
+  cp -fv "${SUSFS_DIR}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" "${KERNEL_DIR}/KernelSU/"
+
+  KERNEL_SUSFS_PATCH=""
+  for candidate in \
+    "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch" \
+    "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.14.patch"; do
+    if [[ -f "${candidate}" ]]; then
+      KERNEL_SUSFS_PATCH="${candidate}"
+      break
     fi
+  done
 
-    cp -fv "${SUSFS_DIR}/kernel_patches/fs/"* "${KERNEL_DIR}/fs/"
-    cp -fv "${SUSFS_DIR}/kernel_patches/include/linux/"* "${KERNEL_DIR}/include/linux/"
+  if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
+    cp -fv "${KERNEL_SUSFS_PATCH}" "${KERNEL_DIR}/"
+  fi
 
-    cp -fv "${SUSFS_DIR}/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" "${KERNEL_DIR}/KernelSU/"
-    cp -fv "${SUSFS_DIR}/kernel_patches/50_add_susfs_in_kernel-4.19.patch" "${KERNEL_DIR}/"
-
-    if ! (cd "${KERNEL_DIR}/KernelSU" && patch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
-      if ! grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
-        echo "Failed applying KernelSU susfs patch."
-        exit 1
-      fi
+  if ! (cd "${KERNEL_DIR}/KernelSU" && patch -p1 --forward < 10_enable_susfs_for_ksu.patch); then
+    if ! grep -q "config KSU_SUSFS" "${KERNEL_DIR}/KernelSU/kernel/Kconfig"; then
+      echo "Failed applying KernelSU susfs patch."
+      exit 1
     fi
+  fi
 
-    if ! (cd "${KERNEL_DIR}" && patch -p1 --forward < 50_add_susfs_in_kernel-4.19.patch); then
+  if [[ -n "${KERNEL_SUSFS_PATCH}" ]]; then
+    patch_name="$(basename "${KERNEL_SUSFS_PATCH}")"
+    if ! (cd "${KERNEL_DIR}" && patch -p1 --forward < "${patch_name}"); then
       if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
         echo "Failed applying kernel susfs patch."
         exit 1
       fi
     fi
+  fi
+
+  if ! grep -q 'obj-\$(CONFIG_KSU_SUSFS) += susfs.o' "${KERNEL_DIR}/fs/Makefile"; then
+    echo 'obj-$(CONFIG_KSU_SUSFS) += susfs.o' >> "${KERNEL_DIR}/fs/Makefile"
+  fi
+
+  if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
+    echo "SUSFS files missing after integration (include/linux/susfs.h or fs/susfs.c)."
+    exit 1
   fi
 fi
 
@@ -244,6 +268,12 @@ echo "Using CLANG_TRIPLE=${CLANG_TRIPLE_PREFIX}"
 echo "Using CROSS_COMPILE=${CROSS_COMPILE_PREFIX}"
 echo "Using CROSS_COMPILE_ARM32=${CROSS_COMPILE_ARM32_PREFIX}"
 
+if [[ "${DISABLE_WERROR}" == "1" ]]; then
+  echo "[4.1/6] Disabling vendor -Werror flags for modern clang compatibility..."
+  find "${KERNEL_DIR}" -type f \( -name Makefile -o -name Kbuild \) \
+    -exec sed -i -E 's/(^|[[:space:]])-Werror($|[[:space:]])/\1-Wno-error\2/g' {} +
+fi
+
 KMAKE_ARGS=(
   O="${OUT_DIR}"
   ARCH=arm64
@@ -268,6 +298,14 @@ KMAKE_ARGS=(
   HOSTLDFLAGS="${HOSTLDFLAGS_BIN}"
 )
 
+if [[ "${DISABLE_WERROR}" == "1" ]]; then
+  KMAKE_ARGS+=(
+    KCFLAGS="-Wno-error -Wno-error=pointer-to-int-cast -Wno-error=void-pointer-to-int-cast -Wno-error=strict-prototypes"
+    HOSTCFLAGS="-Wno-error"
+    HOSTCXXFLAGS="-Wno-error"
+  )
+fi
+
 cd "${KERNEL_DIR}"
 make "${KMAKE_ARGS[@]}" ruby_user_defconfig
 
@@ -286,6 +324,9 @@ set_cfg -e CPU_FREQ_DEFAULT_GOV_SCHEDUTIL
 # Safe release defaults: remove debug-only overhead when possible.
 set_cfg -d PM_DEBUG
 set_cfg -d MTK_SCHED_TRACERS
+if [[ "${DISABLE_WERROR}" == "1" ]]; then
+  set_cfg -d WERROR
+fi
 
 if [[ "${ENABLE_SUKISU}" == "1" ]]; then
   # Non-GKI kernel path.
