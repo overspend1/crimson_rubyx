@@ -209,23 +209,35 @@ export LLVM=1
 export LLVM_IAS=1
 export CC=clang
 
-# Host tools must use system gcc/g++ to avoid old proton ld/glibc RELR issues.
-if [[ -x /usr/bin/gcc && -x /usr/bin/g++ ]]; then
-  export HOSTCC="${HOSTCC:-/usr/bin/gcc -B/usr/bin}"
-  export HOSTCXX="${HOSTCXX:-/usr/bin/g++ -B/usr/bin}"
-  export HOSTLDFLAGS="${HOSTLDFLAGS:--fuse-ld=bfd}"
+# Host tools must use system binutils and compiler to avoid old proton ld/glibc RELR issues.
+if [[ -x /usr/bin/gcc && -x /usr/bin/g++ && -x /usr/bin/ld.bfd ]]; then
+  HOSTCC_BIN="${HOSTCC_BIN:-/usr/bin/gcc}"
+  HOSTCXX_BIN="${HOSTCXX_BIN:-/usr/bin/g++}"
+  HOSTLD_BIN="${HOSTLD_BIN:-/usr/bin/ld.bfd}"
+  HOSTAR_BIN="${HOSTAR_BIN:-/usr/bin/ar}"
+  HOSTNM_BIN="${HOSTNM_BIN:-/usr/bin/nm}"
 else
-  echo "Missing /usr/bin/gcc or /usr/bin/g++."
-  echo "Install build-essential (or provide HOSTCC/HOSTCXX to compatible system compilers)."
+  echo "Missing required host tools (/usr/bin/gcc, /usr/bin/g++, /usr/bin/ld.bfd)."
+  echo "Install build-essential/binutils (or provide HOSTCC_BIN/HOSTCXX_BIN/HOSTLD_BIN)."
   exit 1
 fi
 
-echo "Using HOSTCC=${HOSTCC}"
-echo "Using HOSTCXX=${HOSTCXX}"
-echo "Using HOSTLDFLAGS=${HOSTLDFLAGS}"
+echo "Using HOSTCC=${HOSTCC_BIN}"
+echo "Using HOSTCXX=${HOSTCXX_BIN}"
+echo "Using HOSTLD=${HOSTLD_BIN}"
+
+KMAKE_ARGS=(
+  O="${OUT_DIR}"
+  ARCH=arm64
+  HOSTCC="${HOSTCC_BIN}"
+  HOSTCXX="${HOSTCXX_BIN}"
+  HOSTLD="${HOSTLD_BIN}"
+  HOSTAR="${HOSTAR_BIN}"
+  HOSTNM="${HOSTNM_BIN}"
+)
 
 cd "${KERNEL_DIR}"
-make O="${OUT_DIR}" ARCH=arm64 ruby_user_defconfig
+make "${KMAKE_ARGS[@]}" ruby_user_defconfig
 
 echo "[4.5/6] Applying profile: ${BUILD_PROFILE}"
 
@@ -349,10 +361,10 @@ if [[ "${ENABLE_CUSTOM_CONFIG}" == "1" ]]; then
   fi
 fi
 
-make O="${OUT_DIR}" ARCH=arm64 olddefconfig
+make "${KMAKE_ARGS[@]}" olddefconfig
 
 echo "[5/6] Building kernel..."
-make -j"$(nproc --all)" O="${OUT_DIR}" ARCH=arm64
+make -j"$(nproc --all)" "${KMAKE_ARGS[@]}"
 
 echo "[6/6] Collecting artifacts..."
 cp -fv "${OUT_DIR}/arch/arm64/boot/Image"* "${ARTIFACTS_DIR}/" || true
