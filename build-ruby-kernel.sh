@@ -1,9 +1,26 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Xiaomi ruby/rubypro kernel build helper (run inside WSL/Linux).
-# This script keeps everything in Linux filesystem because Xiaomi kernel tree
-# includes reserved filenames (e.g. aux.c) that cannot be checked out on NTFS.
+# Xiaomi ruby/rubypro kernel build helper (Linux server).
+
+if [[ "$(uname -s)" != "Linux" ]]; then
+  echo "This script must run on Linux."
+  exit 1
+fi
+
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  SUDO=""
+elif command -v sudo >/dev/null 2>&1; then
+  SUDO="sudo"
+else
+  echo "sudo is required when not running as root."
+  exit 1
+fi
+
+if ! command -v apt >/dev/null 2>&1; then
+  echo "apt not found. This script currently supports Debian/Ubuntu-based servers."
+  exit 1
+fi
 
 ROOT_DIR="${HOME}/kramel-ruby"
 KERNEL_DIR="${ROOT_DIR}/kernel_ruby"
@@ -98,8 +115,8 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
 fi
 
 echo "[1/6] Installing build dependencies..."
-sudo apt update
-sudo apt install -y \
+${SUDO} apt update
+${SUDO} apt install -y \
   bc bison build-essential ccache curl flex g++-multilib gcc-multilib git patch \
   libelf-dev liblz4-tool libncurses5-dev libssl-dev libxml2-utils \
   lzop python3 rsync unzip xz-utils zip zlib1g-dev
