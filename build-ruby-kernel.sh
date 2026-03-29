@@ -200,14 +200,22 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
 fi
 
 echo "[4/6] Preparing kernel config (ruby_user_defconfig)..."
-export PATH="${TOOLCHAIN_DIR}/bin:${PATH}"
+# Keep system binutils first for HOSTCC linking; use absolute paths for target LLVM tools.
+export PATH="/usr/bin:/bin:${TOOLCHAIN_DIR}/bin:${PATH}"
 export ARCH=arm64
 export SUBARCH=arm64
 export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-${USER:-builder}}"
 export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-$(hostname 2>/dev/null || echo linux)}"
 export LLVM=1
 export LLVM_IAS=1
-export CC=clang
+export CC="${TOOLCHAIN_DIR}/bin/clang"
+export LD="${TOOLCHAIN_DIR}/bin/ld.lld"
+export AR="${TOOLCHAIN_DIR}/bin/llvm-ar"
+export NM="${TOOLCHAIN_DIR}/bin/llvm-nm"
+export OBJCOPY="${TOOLCHAIN_DIR}/bin/llvm-objcopy"
+export OBJDUMP="${TOOLCHAIN_DIR}/bin/llvm-objdump"
+export STRIP="${TOOLCHAIN_DIR}/bin/llvm-strip"
+export READELF="${TOOLCHAIN_DIR}/bin/llvm-readelf"
 
 # Host tools must use system binutils and compiler to avoid old proton ld/glibc RELR issues.
 if [[ -x /usr/bin/gcc && -x /usr/bin/g++ && -x /usr/bin/ld.bfd ]]; then
@@ -216,6 +224,7 @@ if [[ -x /usr/bin/gcc && -x /usr/bin/g++ && -x /usr/bin/ld.bfd ]]; then
   HOSTLD_BIN="${HOSTLD_BIN:-/usr/bin/ld.bfd}"
   HOSTAR_BIN="${HOSTAR_BIN:-/usr/bin/ar}"
   HOSTNM_BIN="${HOSTNM_BIN:-/usr/bin/nm}"
+  HOSTLDFLAGS_BIN="${HOSTLDFLAGS_BIN:--B/usr/bin}"
 else
   echo "Missing required host tools (/usr/bin/gcc, /usr/bin/g++, /usr/bin/ld.bfd)."
   echo "Install build-essential/binutils (or provide HOSTCC_BIN/HOSTCXX_BIN/HOSTLD_BIN)."
@@ -225,15 +234,26 @@ fi
 echo "Using HOSTCC=${HOSTCC_BIN}"
 echo "Using HOSTCXX=${HOSTCXX_BIN}"
 echo "Using HOSTLD=${HOSTLD_BIN}"
+echo "Using CC=${CC}"
+echo "Using LD=${LD}"
 
 KMAKE_ARGS=(
   O="${OUT_DIR}"
   ARCH=arm64
+  CC="${CC}"
+  LD="${LD}"
+  AR="${AR}"
+  NM="${NM}"
+  OBJCOPY="${OBJCOPY}"
+  OBJDUMP="${OBJDUMP}"
+  STRIP="${STRIP}"
+  READELF="${READELF}"
   HOSTCC="${HOSTCC_BIN}"
   HOSTCXX="${HOSTCXX_BIN}"
   HOSTLD="${HOSTLD_BIN}"
   HOSTAR="${HOSTAR_BIN}"
   HOSTNM="${HOSTNM_BIN}"
+  HOSTLDFLAGS="${HOSTLDFLAGS_BIN}"
 )
 
 cd "${KERNEL_DIR}"
