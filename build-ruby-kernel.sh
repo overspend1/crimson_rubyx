@@ -14,6 +14,7 @@ TOOLCHAIN_DIR="${ROOT_DIR}/proton-clang"
 OUT_DIR="${KERNEL_DIR}/out"
 ARTIFACTS_DIR="${ROOT_DIR}/artifacts"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_JOBS="${BUILD_JOBS:-$(nproc --all)}"
 SKIP_DEPS_INSTALL="${SKIP_DEPS_INSTALL:-0}"
 SUKISU_SETUP_URL="https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh"
 SUSFS_REPO_URL="${SUSFS_REPO_URL:-https://gitlab.com/simonpunk/susfs4ksu.git}"
@@ -39,6 +40,7 @@ Usage:
   ENABLE_SUSFS=1           ./build-ruby-kernel.sh   # integrate SUSFS for KSU (default)
   ENABLE_CUSTOM_CONFIG=1   ./build-ruby-kernel.sh   # merge custom config fragment (default)
   DISABLE_WERROR=1         ./build-ruby-kernel.sh   # disable vendor -Werror traps (default)
+  BUILD_JOBS=1             ./build-ruby-kernel.sh   # single-thread debug build (shows first error clearly)
   SKIP_DEPS_INSTALL=1      ./build-ruby-kernel.sh   # skip apt install (no sudo/root)
   CUSTOM_CONFIG_FRAGMENT=/path/to/file.fragment ./build-ruby-kernel.sh
   SUKISU_REF=auto           ./build-ruby-kernel.sh  # auto: susfs-main if ENABLE_SUSFS=1, else builtin
@@ -450,7 +452,15 @@ fi
 make "${KMAKE_ARGS[@]}" olddefconfig
 
 echo "[5/6] Building kernel..."
-make -j"$(nproc --all)" "${KMAKE_ARGS[@]}"
+BUILD_LOG="${ROOT_DIR}/build-$(date +%Y%m%d-%H%M%S).log"
+if ! make -j"${BUILD_JOBS}" "${KMAKE_ARGS[@]}" 2>&1 | tee "${BUILD_LOG}"; then
+  echo
+  echo "Build failed."
+  echo "Full log: ${BUILD_LOG}"
+  echo "First matched error lines:"
+  grep -nE 'fatal error:| error:|undefined reference|collect2: error|No rule to make target|make\[[0-9]+\]: \*\*\* .* Error' "${BUILD_LOG}" | head -n 40 || true
+  exit 1
+fi
 
 echo "[6/6] Collecting artifacts..."
 cp -fv "${OUT_DIR}/arch/arm64/boot/Image"* "${ARTIFACTS_DIR}/" || true
