@@ -196,6 +196,59 @@ ensure_susfs_inode_flags() {
   mv "${tmp}" "${fs_header}"
 }
 
+patch_legacy_susfs_ksu_api() {
+  local susfs_def="$1"
+  local supercalls_c="$2"
+  local susfs_hdr="$3"
+
+  if [[ ! -f "${susfs_hdr}" || ! -f "${supercalls_c}" || ! -f "${susfs_def}" ]]; then
+    return 0
+  fi
+
+  # Legacy non-GKI susfs headers use struct-pointer API while SukiSU builtin
+  # supercalls expects void ** API and newer command constants.
+  if ! grep -q 'susfs_add_sus_path(struct st_susfs_sus_path\* __user' "${susfs_hdr}"; then
+    return 0
+  fi
+
+  if ! grep -q "SUSFS_MAGIC" "${susfs_def}"; then
+    cat >> "${susfs_def}" <<'EOF'
+
+#ifndef SUSFS_MAGIC
+#define SUSFS_MAGIC 0xFAFAFAFA
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_PATH_LOOP
+#define CMD_SUSFS_ADD_SUS_PATH_LOOP CMD_SUSFS_ADD_SUS_PATH
+#endif
+#ifndef CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS
+#define CMD_SUSFS_HIDE_SUS_MNTS_FOR_NON_SU_PROCS CMD_SUSFS_ADD_SUS_MOUNT
+#endif
+#ifndef CMD_SUSFS_ADD_SUS_MAP
+#define CMD_SUSFS_ADD_SUS_MAP 0x60020
+#endif
+#ifndef CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING
+#define CMD_SUSFS_ENABLE_AVC_LOG_SPOOFING 0x60010
+#endif
+EOF
+  fi
+
+  sed -i \
+    -e 's/susfs_add_sus_path(arg);/susfs_add_sus_path((struct st_susfs_sus_path __user *)*arg);/' \
+    -e 's/susfs_add_sus_path_loop(arg);/susfs_add_sus_path((struct st_susfs_sus_path __user *)*arg);/' \
+    -e 's/susfs_set_hide_sus_mnts_for_non_su_procs(arg);/susfs_add_sus_mount((struct st_susfs_sus_mount __user *)*arg);/' \
+    -e 's/susfs_add_sus_kstat(arg);/susfs_add_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);/' \
+    -e 's/susfs_update_sus_kstat(arg);/susfs_update_sus_kstat((struct st_susfs_sus_kstat __user *)*arg);/' \
+    -e 's/susfs_set_uname(arg);/susfs_set_uname((struct st_susfs_uname __user *)*arg);/' \
+    -e 's/susfs_set_cmdline_or_bootconfig(arg);/susfs_set_cmdline_or_bootconfig((char __user *)*arg);/' \
+    -e 's/susfs_add_open_redirect(arg);/susfs_add_open_redirect((struct st_susfs_open_redirect __user *)*arg);/' \
+    -e 's/susfs_add_sus_map(arg);/(void)arg;/' \
+    -e 's/susfs_set_avc_log_spoofing(arg);/(void)arg;/' \
+    -e 's/susfs_get_enabled_features(arg);/(void)arg;/' \
+    -e 's/susfs_show_variant(arg);/(void)arg;/' \
+    -e 's/susfs_show_version(arg);/(void)arg;/' \
+    "${supercalls_c}"
+}
+
 if [[ "${ENABLE_SUKISU}" == "1" ]]; then
   if ! sukisu_ref_exists "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git" "${SUKISU_REF}"; then
     echo "SUKISU_REF '${SUKISU_REF}' does not exist as a remote branch/tag."
@@ -327,6 +380,11 @@ if [[ "${ENABLE_SUSFS}" == "1" ]]; then
   if grep -q "INODE_STATE_SUS_" "${KERNEL_DIR}/fs/proc/task_mmu.c" 2>/dev/null; then
     ensure_susfs_inode_flags "${KERNEL_DIR}/include/linux/fs.h"
   fi
+
+  patch_legacy_susfs_ksu_api \
+    "${KERNEL_DIR}/include/linux/susfs_def.h" \
+    "${KERNEL_DIR}/KernelSU/kernel/supercalls.c" \
+    "${KERNEL_DIR}/include/linux/susfs.h"
 
   if [[ ! -f "${KERNEL_DIR}/include/linux/susfs.h" || ! -f "${KERNEL_DIR}/fs/susfs.c" ]]; then
     echo "SUSFS files missing after integration (include/linux/susfs.h or fs/susfs.c)."
